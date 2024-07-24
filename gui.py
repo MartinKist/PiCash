@@ -1,6 +1,8 @@
 import framebuf
 from hw_drivers.lcd_3inch5 import lcd, DisplayArea
-import asyncio
+
+from singleton import Singleton
+from models import Purchase, Item
 
 
 class Colors:
@@ -10,7 +12,7 @@ class Colors:
     WHITE = 0xFFFF
     BLACK = 0x0000
     GREY = 0x7BEF
-
+    YELLOW = 0xffc0
 
 class Button:
     def __init__(
@@ -19,43 +21,54 @@ class Button:
         text: str,
         bg_color: int = Colors.GREY,
         text_color: int = Colors.BLACK,
+        text_size: int = 1,
         callback=lambda: None,
     ) -> None:
+
+        self._needs_redraw = True
+        self._pressed = False
+
         self.coords = coords
-        self.text = text
+        self.width = coords[2] - coords[0] - 1
+        self.height = coords[3] - coords[1] - 1
+
         self.callback = callback
 
         self.bg_color = bg_color
         self.text_color = text_color
-        self.width = coords[2] - coords[0] - 1
-        self.height = coords[3] - coords[1] - 1
+        self.text = text
+        self.text_size = text_size
 
         self.display_area = DisplayArea(self.coords)
 
-        self._pressed = False
+    def draw(self, text_color: Colors = None, bg_color: Colors = None, force = True):
+        if self._needs_redraw or force:
+            if text_color is None:
+                text_color = self.text_color
+            if bg_color is None:
+                bg_color = self.bg_color
 
-        self.draw()
+            self.display_area.fill(bg_color)
 
-    def draw(self, text_color: Colors = None, bg_color: Colors = None):
-        if text_color is None:
-            text_color = self.text_color
-        if bg_color is None:
-            bg_color = self.bg_color
+            if isinstance(self.text, str):
+                self.text = [self.text]
+            margin = self.text_size * 5
+            for i, ln in enumerate(self.text):
+                self.display_area.large_text(ln, margin, margin + i * 10 * self.text_size, self.text_size, c=text_color)
 
-        self.display_area.fill(bg_color)
-        self.display_area.text(self.text, 0, 0, text_color)
-        lcd.update_area(self.display_area)
+            lcd.update_area(self.display_area)
+            self._needs_redraw = False
 
     def press(self):
         self._pressed = True
-        self.draw(Colors.BLACK, Colors.WHITE)
+        self.draw(Colors.BLACK, Colors.WHITE, force=True)
 
     def check_released(self):
         if self._pressed:
             self._pressed = False
             self.callback()
-            print(self.text)
-            self.draw()
+
+            self.draw(force=True)
 
     def check_pressed(self, x, y):
         if not self._pressed and (
@@ -63,9 +76,19 @@ class Button:
         ):
             self.press()
 
+    def __setattr__(self, name: str, value) -> None:
+        if name in ("text", "bg_color", "text_color"):
+            try:
+                if  getattr(self, name) != value:
+                    self._needs_redraw = True
+            except AttributeError:
+                pass
+        super().__setattr__(name, value)
+
 
 class ButtonBoard:
     def __init__(self, coords: tuple, x: int, y: int) -> None:
+        self.display = Display()
         self.coords = coords
 
         self.buttons = {}
@@ -99,51 +122,70 @@ class ButtonBoard:
     def add_button(self, text: str, callback=lambda: None, position: tuple = None):
         if position is None:
             position = self.get_free_positon()
-        b = Button(self.positon_to_coords(position), text, callback=callback)
+        b = Button(self.positon_to_coords(position), text, callback=callback, text_size=2)
         self.buttons[position] = b
+        self.display.add_button(b)
         return b
 
 
 class PurchaseViewer:
-    def __init__(self, coords: tuple) -> None:
+    def __init__(self, coords: tuple, item_remove_cb, rows: int = 4) -> None:
+        self.display = Display()
         self.coords = coords
-        self.submit_button = Button(
-            (self.coords[0], self.coords[3] - 60, self.coords[2], self.coords[3]),
-            "Submit",
-            callback=self.on_submit,
-            bg_color=Colors.RED,
-        )
-        self.submit_button.draw()
+        self.rows = rows
+        self.item_remove_cb = item_remove_cb
 
+        # some geometry
         self.width = coords[2] - coords[0] + 1
         self.height = coords[3] - coords[1] + 1
+        self.btn_height = self.height // rows
 
-        #self.draw()
+        self.item_buttons = []
+        for i in range(self.rows):
+            btn = Button(
+                (self.coords[0], i * self.btn_height, self.coords[2], (i+1)*self.btn_height),
+                "",
+                bg_color=Colors.WHITE,
+                text_size=2
+            )
+            self.item_buttons.append(btn)
+            self.display.add_button(btn)
 
-    def on_submit(self):
-        print("submit")
+    def clear_button(self, btn):
+        btn.text = ""
+        btn.bg_color = Colors.WHITE
+        btn.callback = lambda: None
+        btn.draw()
 
-    def draw(self):
-        buf = bytearray(self.width * self.height * 2)
-        fbuf = framebuf.FrameBuffer(buf, self.width, self.height, framebuf.RGB565)
-        fbuf.fill(Colors.WHITE)
-        lcd.update_area(*self.coords, buf)
+    def update(self, purchase: Purchase):
+        items = list(purchase.items.items())
+        for i, btn in enumerate(self.item_buttons):
+            if i < len(items):
+                item, amount = items[i]
+                btn.text = [f"{amount}x {item.name}", f"{amount*item.price:.2f} EURO"]
+                btn.bg_color = Colors.GREY
+                btn.callback = self.item_remove_cb(item)
+                btn.draw()
+            else:
+                self.clear_button(btn)
 
 
-class GUI:
+
+
+class Display(Singleton):
     def __init__(self) -> None:
         self.buttons = set()
-        self.bb = ButtonBoard((0, 0, 280, 320), 3, 4)
-        self.pv = PurchaseViewer((280, 0, 481, 321))
-
-    def add_button(self, text: str, callback=lambda: None, position: tuple = None):
-        button = self.bb.add_button(text, callback, position)
+        
+    def add_button(self, button: Button):
         self.buttons.add(button)
 
     def run(self):
+        #lcd.fill_area((0, 0, 480, 320), Colors.WHITE)
+        for button in self.buttons:
+            button.draw()
+
         while True:
             x, y, state = lcd.touch_input()
-            #print(x, y, state)
             if state == "pressed":
                 for btn in self.buttons:
                     btn.check_pressed(x, y)

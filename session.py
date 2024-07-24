@@ -1,47 +1,47 @@
 import json
-import os.path
+import os
 
-from purchase import Purchase
-from base import HasID
-from item import Item
+from models import Purchase
+
+from configuration import Config
 
 
-SESSION_DIR = "./data/sessions"
+DATA_DIR = "/data"
 
 
 class Session:
     def __init__(self) -> None:
-        if os.path.exists(SESSION_DIR):
-            self.id = max(int(s_id) for s_id in os.listdir(SESSION_DIR)) + 1
-        else:
-            self.id = 0
+        self.config = Config()
+        self.name = self.config.session_name
+        self.init_cash = self.config.init_cash
 
-        self.dir = f"{SESSION_DIR}/{self.id}"
-        self.purchases_dir = f"{self.dir}/purchases"
-        self.create_directories()
+        self.filename = f"{DATA_DIR}/{self.name}.json"
 
-        self.purchases = set()
+        self.purchases = []
 
-    def create_directories(self):
-        if not os.path.exists(self.purchases_dir):
-            os.makedirs(self.purchases_dir)
+        self.make_dir()
 
-    def new_purchase(self):
-        p = Purchase(self.purchases_dir)
-        self.purchases.add(p)
-        return p
+    def make_dir(self):
+        try:
+            os.mkdir(DATA_DIR)
+        except Exception as e:
+            pass
+
+    def save_purchase(self, purchase: Purchase):
+        self.purchases.append(purchase)
+        self.save()
+
+    def save(self):
+        with open(self.filename, "w") as file:
+            json.dump(self.data, file)
 
     @property
+    def data(self) -> dict:
+        return {
+            "name": self.name,
+            "init_cash": self.init_cash,
+            "purchases": [purchase.data for purchase in self.purchases]
+        }
+    @property
     def total(self):
-        return sum(purchase.total for purchase in self.purchases)
-
-
-if __name__ == "__main__":
-    a = Session()
-    p = Purchase()
-    p.add_item(Item("Kwas", 8.8))
-    p.add_item(Item("Bier", 3))
-    p2 = Purchase()
-    p2.add_item(Item("k", 4))
-    a.add_purchase(p)
-    a.add_purchase(p2)
+        return sum(purchase.total for purchase in self.purchases) + self.init_cash

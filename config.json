@@ -1,0 +1,8 @@
+{
+    "session_name": "meh",
+    "init_cash": 12,
+    "items": {
+        "Waffel": 3.5,
+        "Topping": 0.5
+    }
+}

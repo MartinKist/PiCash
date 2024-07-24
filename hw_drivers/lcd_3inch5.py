@@ -1,5 +1,5 @@
 from machine import Pin, SPI, PWM
-import framebuf
+import framebuf2 as framebuf
 import time
 import asyncio
 import gc
@@ -191,6 +191,42 @@ class LCD_3inch5:
         self.dc(1)
         self.cs(0)
         self.spi.write(area.buffer)
+        self.cs(1)
+
+    def fill_area(self, coords, value):
+        x_top, y_top, x_bottom, y_bottom = coords
+
+        # Set column address (X direction)
+        self.write_cmd(0x2A)
+        self.write_data(x_top >> 8)      # High byte of x_top
+        self.write_data(x_top & 0xFF)    # Low byte of x_top
+        self.write_data(x_bottom >> 8)   # High byte of x_bottom
+        self.write_data(x_bottom & 0xFF) # Low byte of x_bottom
+
+        # Set row address (Y direction)
+        self.write_cmd(0x2B)
+        self.write_data(y_top >> 8)      # High byte of y_top
+        self.write_data(y_top & 0xFF)    # Low byte of y_top
+        self.write_data(y_bottom >> 8)   # High byte of y_bottom
+        self.write_data(y_bottom & 0xFF) # Low byte of y_bottom
+
+        # Write memory
+        self.write_cmd(0x2C)
+
+        # Calculate the number of pixels to fill
+        width = x_bottom - x_top + 1
+        height = y_bottom - y_top + 1
+        num_pixels = width * height
+
+        # SPI write sequence
+        self.cs(1)
+        self.dc(1)
+        self.cs(0)
+
+        # Convert each value to bytes and write to display
+        for i in range(num_pixels):
+            self.spi.write(value.to_bytes(2, 'big'))  # Assuming 16-bit color depth
+
         self.cs(1)
 
     def bl_ctrl(self, duty):
